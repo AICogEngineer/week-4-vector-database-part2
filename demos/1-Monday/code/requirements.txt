@@ -1,0 +1,4 @@
+chromadb>=0.4.0
+sentence-transformers>=2.2.0
+numpy>=1.21.0
+openai>=1.0.0  # Optional: For Demo 03 LLM generation (set USE_OPENAI=False to skip)
