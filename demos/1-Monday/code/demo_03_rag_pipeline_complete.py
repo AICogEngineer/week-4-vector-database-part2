@@ -23,6 +23,7 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass
 import chromadb
 from sentence_transformers import SentenceTransformer
+from openai import OpenAI
 
 # ============================================================================
 # OPENAI CONFIGURATION
@@ -38,7 +39,6 @@ USE_OPENAI = True
 
 if USE_OPENAI:
     try:
-        from openai import OpenAI
         client = OpenAI()  # Uses OPENAI_API_KEY environment variable
         print("[OpenAI] Successfully initialized OpenAI client")
     except ImportError:
