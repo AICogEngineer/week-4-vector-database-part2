@@ -243,7 +243,7 @@ class SimpleRAGPipeline:
             
         self.collection = self.client.create_collection(
             name=collection_name,
-            metadata={"hnsw:space": "cosine"}
+            metadata={"hnsw:space": "cosine"} # what other options? when an why do we use these options?
         )
         print(f"  ✓ Collection '{collection_name}' created")
         
@@ -558,7 +558,7 @@ INGESTION (One-time):
 │      ↓ chunk()                                                  │
 │ ~15+ chunks (300 chars each, 50 overlap)                        │
 │      ↓ embedder.encode()                                        │
-│ 15+ vectors (384 dimensions each)                                │
+│ 15+ vectors (384/1536 dimensions each)                          │
 │      ↓ collection.add()                                         │
 │ Stored in Chroma with metadata                                   │
 └─────────────────────────────────────────────────────────────────┘
@@ -567,7 +567,7 @@ QUERY (Every request):
 ┌─────────────────────────────────────────────────────────────────┐
 │ "What is machine learning?"                                      │
 │      ↓ embedder.encode()                                        │
-│ Query vector (384 dimensions)                                    │
+│ Query vector (384/1536 dimensions)                                    │
 │      ↓ collection.query()                                       │
 │ Top 2 most similar chunks                                        │
 │      ↓ _build_context()                                         │
