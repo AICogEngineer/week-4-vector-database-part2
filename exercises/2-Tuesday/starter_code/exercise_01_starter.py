@@ -1,21 +1,33 @@
 """
-Exercise 01: Multi-Format Document Ingestion - Starter Code
+Exercise 01: Multi-Format Document Ingestion with LangChain - Starter Code
 
-Build a unified document ingestion pipeline for HTML, Markdown, and text files.
+Build a unified document ingestion pipeline using LangChain text splitters.
 
 Instructions:
-1. Implement each TODO function
+1. Implement each TODO function using the appropriate LangChain splitter
 2. Run this file to test your implementations
 3. Check the expected output in the exercise guide
+
+Prerequisites:
+- pip install langchain-text-splitters chromadb sentence-transformers
+
+References:
+- https://docs.langchain.com/oss/python/integrations/splitters/split_html
+- https://docs.langchain.com/oss/python/integrations/splitters/markdown_header_metadata_splitter
 """
 
-import re
-from html import unescape
-from typing import Dict, List, Optional
+from typing import Dict, List
 from dataclasses import dataclass
 from datetime import datetime
 import chromadb
 from sentence_transformers import SentenceTransformer
+
+# LangChain splitters - these are your tools!
+from langchain_text_splitters import (
+    RecursiveCharacterTextSplitter,
+    MarkdownHeaderTextSplitter,
+    HTMLHeaderTextSplitter,
+)
 
 # ============================================================================
 # SAMPLE DOCUMENTS (DO NOT MODIFY)
@@ -30,11 +42,11 @@ SAMPLE_HTML = """
 </head>
 <body>
     <h1>Customer Support Guide</h1>
-    <p>Welcome to our <strong>support</strong> documentation.</p>
+    <p>Welcome to our support documentation.</p>
     
     <h2>Getting Help</h2>
     <p>Contact us at support@example.com or call 1-800-HELP.</p>
-    <p>Our team responds within &lt;24 hours&gt;.</p>
+    <p>Our team responds within 24 hours.</p>
     
     <script>console.log("tracking");</script>
     
@@ -100,157 +112,133 @@ class Document:
 
 
 # ============================================================================
-# TODO: IMPLEMENT THESE FUNCTIONS
+# TODO: IMPLEMENT THESE FUNCTIONS USING LANGCHAIN SPLITTERS
 # ============================================================================
 
-def load_html(html_content: str, source: str = "unknown.html") -> Document:
+def split_html(html_content: str, source: str = "unknown.html") -> List[Document]:
     """
-    Load and clean an HTML document.
+    Split HTML using LangChain HTMLHeaderTextSplitter.
     
     Tasks:
-    1. Remove <script> and <style> elements entirely
-    2. Remove all HTML tags
-    3. Decode HTML entities (&amp; -> &, &lt; -> <, etc.)
-    4. Extract title from <title> or first <h1> for metadata
-    5. Normalize whitespace
+    1. Define headers_to_split_on for h1, h2, h3
+    2. Create HTMLHeaderTextSplitter with those headers
+    3. Call split_text() on the HTML content
+    4. Convert LangChain Documents to our Document format
+    5. Add source, chunk_index, total_chunks to metadata
     
-    Args:
-        html_content: Raw HTML string
-        source: Source filename
-        
+    Example from docs:
+        headers_to_split_on = [
+            ("h1", "Header 1"),
+            ("h2", "Header 2"),
+        ]
+        html_splitter = HTMLHeaderTextSplitter(headers_to_split_on)
+        docs = html_splitter.split_text(html_string)
+    
     Returns:
-        Document with cleaned content and metadata
+        List of Document objects with header hierarchy in metadata
     """
-    # TODO: Implement this function
-    # Hints:
-    # - Use re.sub() to remove script/style blocks
-    # - Use re.search() to find title
-    # - Use html.unescape() for entity decoding
+    # TODO: Implement using HTMLHeaderTextSplitter
+    # Hint: Each LangChain doc has .page_content and .metadata
     
     pass  # Remove this and add your implementation
 
 
-def load_markdown(md_content: str, source: str = "unknown.md") -> Document:
+def split_markdown(md_content: str, source: str = "unknown.md") -> List[Document]:
     """
-    Load and clean a Markdown document.
+    Split Markdown using LangChain MarkdownHeaderTextSplitter.
     
     Tasks:
-    1. Remove code blocks (``` ... ```)
-    2. Remove inline code backticks but keep content
-    3. Remove formatting markers (*, _, #)
-    4. Convert links [text](url) to just text
-    5. Extract first header as title
+    1. Define headers_to_split_on for #, ##, ###
+    2. Create MarkdownHeaderTextSplitter with strip_headers=False
+    3. Call split_text() on the Markdown content
+    4. Convert to our Document format with proper metadata
     
-    Args:
-        md_content: Raw Markdown string
-        source: Source filename
-        
+    Example from docs:
+        headers_to_split_on = [
+            ("#", "Header 1"),
+            ("##", "Header 2"),
+        ]
+        md_splitter = MarkdownHeaderTextSplitter(headers_to_split_on)
+        docs = md_splitter.split_text(markdown_document)
+    
     Returns:
-        Document with cleaned content and metadata
+        List of Document objects with header hierarchy in metadata
     """
-    # TODO: Implement this function
-    # Hints:
-    # - Use re.sub(r'```[\s\S]*?```', '', text) for code blocks
-    # - Use re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text) for links
+    # TODO: Implement using MarkdownHeaderTextSplitter
     
     pass  # Remove this and add your implementation
 
 
-def load_text(text_content: str, source: str = "unknown.txt") -> Document:
+def split_text(text_content: str, source: str = "unknown.txt") -> List[Document]:
     """
-    Load a plain text document.
+    Split plain text using LangChain RecursiveCharacterTextSplitter.
     
     Tasks:
-    1. Normalize whitespace
-    2. Extract first line or section header as title
-    3. Create standard metadata
+    1. Create RecursiveCharacterTextSplitter with:
+       - chunk_size=400
+       - chunk_overlap=50
+       - separators=["\n\n", "\n", ". ", " "]
+    2. Call split_text() on the content
+    3. Convert to our Document format
     
-    Args:
-        text_content: Raw text string
-        source: Source filename
-        
+    Example from docs:
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=400,
+            chunk_overlap=50
+        )
+        chunks = text_splitter.split_text(text)
+    
     Returns:
-        Document with content and metadata
+        List of Document objects
     """
-    # TODO: Implement this function
-    # This one is simpler - mostly whitespace cleanup
+    # TODO: Implement using RecursiveCharacterTextSplitter
     
     pass  # Remove this and add your implementation
 
 
 class DocumentLoader:
     """
-    Unified document loader that handles multiple formats.
+    Unified document loader using LangChain splitters.
     """
     
     def __init__(self):
-        self.loaders = {
-            '.html': load_html,
-            '.htm': load_html,
-            '.md': load_markdown,
-            '.markdown': load_markdown,
-            '.txt': load_text,
+        self.splitters = {
+            '.html': split_html,
+            '.htm': split_html,
+            '.md': split_markdown,
+            '.markdown': split_markdown,
+            '.txt': split_text,
         }
     
-    def load(self, content: str, source: str) -> Document:
+    def load(self, content: str, source: str) -> List[Document]:
         """
-        Load a document by detecting format from source filename.
+        Load and split a document by detecting format from source filename.
         
-        Args:
-            content: Document content
-            source: Source filename (used for format detection)
-            
+        TODO:
+        1. Extract extension from source
+        2. Find appropriate splitter
+        3. Call splitter with content and source
+        4. Return the result
+        
         Returns:
-            Loaded Document
+            List of Document chunks with metadata
         """
         # TODO: Implement this method
-        # 1. Extract extension from source
-        # 2. Find appropriate loader
-        # 3. Call loader with content and source
-        # 4. Return the result
         
         pass  # Remove this and add your implementation
 
 
-def chunk_document(doc: Document, chunk_size: int = 400, overlap: int = 50) -> List[Dict]:
+def ingest_documents(doc_chunks: List[Document], collection) -> Dict:
     """
-    Chunk a document and prepare for vector store ingestion.
+    Ingest document chunks into a Chroma collection.
     
-    Args:
-        doc: Document to chunk
-        chunk_size: Target chunk size
-        overlap: Overlap between chunks
-        
-    Returns:
-        List of dicts with 'content' and 'metadata' keys
+    TODO:
+    1. Extract content and metadata from all chunks
+    2. Generate embeddings using SentenceTransformer
+    3. Add to collection with unique IDs
+    4. Return stats
     """
     # TODO: Implement this function
-    # 1. Split content into chunks
-    # 2. For each chunk, create metadata including:
-    #    - All original document metadata
-    #    - chunk_index
-    #    - total_chunks
-    # 3. Return list of {content, metadata} dicts
-    
-    pass  # Remove this and add your implementation
-
-
-def ingest_documents(documents: List[Document], collection) -> Dict:
-    """
-    Ingest documents into a Chroma collection.
-    
-    Args:
-        documents: List of Document objects
-        collection: Chroma collection
-        
-    Returns:
-        Statistics dict with counts
-    """
-    # TODO: Implement this function
-    # 1. Chunk each document
-    # 2. Embed all chunks
-    # 3. Add to collection with IDs and metadata
-    # 4. Return stats
     
     pass  # Remove this and add your implementation
 
@@ -260,64 +248,68 @@ def ingest_documents(documents: List[Document], collection) -> Dict:
 # ============================================================================
 
 def run_tests():
-    """Test the document ingestion pipeline."""
+    """Test the LangChain-based document ingestion pipeline."""
     print("=" * 60)
-    print("Exercise 01: Multi-Format Document Ingestion")
+    print("Exercise 01: Multi-Format Ingestion with LangChain")
     print("=" * 60)
     
     loader = DocumentLoader()
     
-    # Test documents
     test_cases = [
         ("support.html", SAMPLE_HTML),
         ("guide.md", SAMPLE_MARKDOWN),
         ("config.txt", SAMPLE_TEXT),
     ]
     
-    documents = []
+    all_chunks = []
     
-    print("\n=== Loading Sample Documents ===\n")
+    print("\n=== Loading and Splitting Documents ===\n")
     
     for source, content in test_cases:
         fmt = source.split('.')[-1].upper()
         print(f"[{fmt}] {source}")
         
         try:
-            doc = loader.load(content, source)
+            chunks = loader.load(content, source)
             
-            if doc is None:
+            if chunks is None:
                 print(f"  [ERROR] Loader returned None - not implemented yet")
                 continue
             
-            print(f"  Title: {doc.metadata.get('title', 'Unknown')}")
-            print(f"  Length: {len(doc.content)} chars")
-            print(f"  [OK] Loaded successfully")
-            documents.append(doc)
+            print(f"  Chunks created: {len(chunks)}")
+            
+            # Show metadata from first chunk
+            if chunks:
+                first_meta = chunks[0].metadata
+                if 'Header 1' in first_meta:
+                    print(f"  Header 1: {first_meta.get('Header 1', 'N/A')}")
+                print(f"  First chunk preview: {chunks[0].content[:50]}...")
+            
+            all_chunks.extend(chunks)
             
         except Exception as e:
             print(f"  [ERROR] {e}")
         
         print()
     
-    if not documents:
-        print("[INFO] No documents loaded. Implement the loader functions first.")
+    if not all_chunks:
+        print("[INFO] No documents loaded. Implement the splitter functions first.")
         return
     
     # Test ingestion
     print("=== Ingesting to Vector Store ===")
     
     try:
-        embedder = SentenceTransformer('all-MiniLM-L6-v2')
         client = chromadb.Client()
         
         try:
-            client.delete_collection("exercise_01")
+            client.delete_collection("exercise_01_langchain")
         except:
             pass
         
-        collection = client.create_collection("exercise_01")
+        collection = client.create_collection("exercise_01_langchain")
         
-        stats = ingest_documents(documents, collection)
+        stats = ingest_documents(all_chunks, collection)
         
         if stats:
             print(f"  Ingested {stats.get('total_chunks', 0)} chunks from {stats.get('total_docs', 0)} documents")

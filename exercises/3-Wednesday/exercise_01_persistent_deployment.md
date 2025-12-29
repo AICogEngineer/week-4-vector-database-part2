@@ -1,100 +1,117 @@
-# Exercise 01: Persistent Deployment
+# Exercise 01: Local to Cloud Deployment with Pinecone
 
 ## Overview
 
-Local development with in-memory databases is convenient, but production systems need persistent storage with proper data management. In this exercise, you'll configure a production-ready persistent vector database.
+Build a **base class pattern** for vector stores, then implement both local (Chroma) and cloud (Pinecone) backends. This teaches DRY principles and production deployment patterns.
 
 ## Learning Objectives
 
-- Configure Chroma for persistent storage
-- Implement backup and restore functionality
-- Create an initialization and recovery workflow
-- Handle data migration between environments
+- Design a base class with shared logic
+- Implement abstract methods in subclasses
+- Test locally, deploy to cloud
+- Build environment-agnostic code
 
-## The Scenario
+## Prerequisites
 
-Your team is moving from development to staging. You need to:
-1. Set up persistent storage that survives restarts
-2. Create a backup strategy for disaster recovery
-3. Build a migration tool for moving data between environments
+1. **Pinecone Account** - https://www.pinecone.io (free tier)
+2. **Environment**: `export PINECONE_API_KEY="your-key"`
+3. **Install**: `pip install pinecone-client chromadb sentence-transformers`
 
-## Your Tasks
+---
 
-### Task 1: Persistent Client Setup (20 min)
+## Part 1: Implement VectorStoreBase (20 min)
 
-Implement `setup_persistent_client()`:
-- Configure Chroma's PersistentClient with a data directory
-- Ensure directory exists and is writable
-- Return client and collection
+The abstract methods are defined. Implement the **shared methods**:
 
-### Task 2: Backup System (25 min)
+### `__init__(self)`
+```python
+self.embedder = SentenceTransformer('all-MiniLM-L6-v2')
+self._initialize()
+```
 
-Implement `BackupManager`:
-- `create_backup()`: Export all data to JSON format
-- `restore_backup()`: Import data from backup file
-- `list_backups()`: Show available backups
+### `_embed(self, texts)`
+```python
+return self.embedder.encode(texts).tolist()
+```
 
-The backup should include:
-- All documents and their IDs
-- All metadata
-- Collection configuration
+### `_generate_ids(self, count, prefix="doc")`
+```python
+return [f"{prefix}_{i}" for i in range(count)]
+```
 
-### Task 3: Data Migration (20 min)
+### `add_documents(self, texts, metadatas)`
+```python
+embeddings = self._embed(texts)
+ids = self._generate_ids(len(texts))
+self._store(ids, embeddings, texts, metadatas)
+return len(texts)
+```
 
-Implement `migrate_collection()`:
-- Copy data from source to target collection
-- Preserve all metadata
-- Handle name conflicts
-- Report migration statistics
+### `search(self, query, n_results=5)`
+```python
+embedding = self._embed([query])[0]
+return self._query(embedding, n_results)
+```
 
-### Task 4: Health Check (15 min)
+---
 
-Implement `DatabaseHealthCheck`:
-- `check_storage()`: Verify disk space and permissions
-- `check_collection()`: Validate collection integrity
-- `check_embeddings()`: Sample check that embeddings are valid
+## Part 2: Implement LocalVectorStore (15 min)
 
-## Definition of Done
+### `_initialize(self)`
+- Create directory, PersistentClient, get/create collection
 
-- [_] Persistent client configured and working
-- [_] Backup creates valid JSON exports
-- [_] Restore successfully recreates data
-- [_] Migration between collections works
-- [_] Health checks report accurate status
+### `_store(self, ids, embeddings, texts, metadatas)`
+- `collection.add(...)`
 
-## Testing Your Solution
+### `_query(self, embedding, n_results)`
+- Query and return `[{text, metadata, score}]`
 
+### `_get_all_data(self)`
+- Export for migration
+
+---
+
+## Part 3: Implement CloudVectorStore (20 min)
+
+### `_initialize(self)`
+- Get API key, create client, create index if needed
+
+### `_store(self, ids, embeddings, texts, metadatas)`
+- Build vectors (include text in metadata), batch upsert
+
+### `_query(self, embedding, n_results)`
+- Query and return `[{text, metadata, score}]`
+
+---
+
+## Part 4: Test Migration (10 min)
+
+Migration helpers are provided. Just run:
 ```bash
-cd exercises/3-Wednesday/starter_code
+export PINECONE_API_KEY="your-key"
 python exercise_01_starter.py
 ```
 
-Expected output:
+---
+
+## Definition of Done
+
+- [ ] `VectorStoreBase` shared methods work
+- [ ] `LocalVectorStore` adds and searches
+- [ ] `CloudVectorStore` connects and queries
+- [ ] Migration successful
+
+## Expected Output
+
 ```
-=== Persistent Deployment Exercise ===
+=== Phase 1: Local ===
+[OK] Added 8 docs
+[OK] Search: Python is the most popular...
 
-[OK] Persistent client initialized at ./chroma_data
+=== Phase 2: Cloud ===
+[OK] Pinecone connected
+[OK] Migrated 8 docs
+[OK] Verified: PASS
 
-=== Backup Test ===
-[OK] Created backup: backup_2024-01-15_10-30-00.json
-[OK] Backup contains 50 documents
-
-=== Restore Test ===
-[OK] Restored 50 documents from backup
-
-=== Migration Test ===
-[OK] Migrated 50 documents from 'source' to 'target'
-
-=== Health Check ===
-Storage: [OK] 15.2 GB available
-Collection: [OK] 50 documents, no orphans
-Embeddings: [OK] Sample validation passed
-
-[OK] Persistent deployment configured successfully!
+[DONE]
 ```
-
-## Stretch Goals (Optional)
-
-1. Add incremental backups (only changed documents)
-2. Implement backup compression
-3. Add backup verification (compare counts/checksums)

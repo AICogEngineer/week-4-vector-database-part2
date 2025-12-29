@@ -1,2 +1,7 @@
 chromadb>=0.4.0
 sentence-transformers>=2.2.0
+langchain-text-splitters>=0.0.1  # For Demo 01 production text splitters
+langchain-community>=0.0.1       # For Demo 02 document loaders
+pypdf>=3.0.0                     # For PyPDFLoader
+beautifulsoup4>=4.12.0           # For WebBaseLoader
+jq>=1.6.0                        # For JSONLoader (optional - uses pure Python fallback if unavailable)

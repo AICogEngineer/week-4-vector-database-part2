@@ -1,371 +1,222 @@
 """
-Exercise 01: Persistent Deployment - Solution
+Exercise 01: Local to Cloud Deployment - SOLUTION
 
-Complete implementation of persistent vector database configuration.
+Uses base class pattern to share embedding/search logic between backends.
 """
 
 import os
-import json
-import shutil
+from abc import ABC, abstractmethod
+from typing import List, Dict
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
+import shutil
 import chromadb
 from sentence_transformers import SentenceTransformer
 
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
+try:
+    from pinecone import Pinecone, ServerlessSpec
+    PINECONE_AVAILABLE = True
+except ImportError:
+    PINECONE_AVAILABLE = False
 
-DATA_DIR = Path("./chroma_data")
-BACKUP_DIR = Path("./backups")
-COLLECTION_NAME = "production_docs"
+LOCAL_DATA_DIR = Path("./chroma_local_test")
+PINECONE_INDEX_NAME = "week4-exercise"
+EMBEDDING_DIMENSION = 384
 
-
-# ============================================================================
-# SAMPLE DATA
-# ============================================================================
-
-SAMPLE_DOCUMENTS = [
-    {"id": "doc_001", "content": "Getting started with machine learning requires understanding basic concepts.", "metadata": {"category": "tutorial", "version": "1.0"}},
-    {"id": "doc_002", "content": "Deep learning uses neural networks with multiple layers for complex tasks.", "metadata": {"category": "tutorial", "version": "1.0"}},
-    {"id": "doc_003", "content": "Natural language processing enables computers to understand human language.", "metadata": {"category": "reference", "version": "2.0"}},
-    {"id": "doc_004", "content": "Vector databases store high-dimensional embeddings for similarity search.", "metadata": {"category": "reference", "version": "2.0"}},
-    {"id": "doc_005", "content": "RAG systems combine retrieval and generation for better AI responses.", "metadata": {"category": "tutorial", "version": "2.0"}},
+SAMPLE_DOCS = [
+    {"text": "Python is the most popular language for machine learning.", "category": "ml"},
+    {"text": "TensorFlow and PyTorch are leading deep learning frameworks.", "category": "ml"},
+    {"text": "React and Vue are popular JavaScript frontend frameworks.", "category": "web"},
+    {"text": "Docker containers simplify application deployment.", "category": "devops"},
+    {"text": "Kubernetes orchestrates containerized applications at scale.", "category": "devops"},
+    {"text": "PostgreSQL is a powerful open-source relational database.", "category": "database"},
+    {"text": "Vector databases store embeddings for similarity search.", "category": "database"},
+    {"text": "RAG combines retrieval and generation for better AI responses.", "category": "ml"},
 ]
 
 
 # ============================================================================
-# SOLUTION IMPLEMENTATIONS
+# BASE CLASS - SHARED LOGIC
 # ============================================================================
 
-def setup_persistent_client(data_dir: Path) -> tuple:
-    """
-    Set up a persistent Chroma client with proper configuration.
-    """
-    # Create directory if it doesn't exist
-    data_dir.mkdir(parents=True, exist_ok=True)
+class VectorStoreBase(ABC):
+    def __init__(self):
+        self.embedder = SentenceTransformer('all-MiniLM-L6-v2')
+        self._initialize()
     
-    # Initialize persistent client
-    client = chromadb.PersistentClient(path=str(data_dir))
+    @abstractmethod
+    def _initialize(self): pass
     
-    # Create or get collection
-    collection = client.get_or_create_collection(
-        name=COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"}
-    )
+    @abstractmethod
+    def _store(self, ids, embeddings, texts, metadatas): pass
     
-    return client, collection
+    @abstractmethod
+    def _query(self, embedding, n_results) -> List[dict]: pass
+    
+    @abstractmethod
+    def _get_count(self) -> int: pass
+    
+    @abstractmethod
+    def _get_all_data(self) -> dict: pass
+    
+    # Shared methods
+    def _embed(self, texts):
+        return self.embedder.encode(texts).tolist()
+    
+    def _generate_ids(self, count, prefix="doc"):
+        return [f"{prefix}_{i}" for i in range(count)]
+    
+    def add_documents(self, texts, metadatas):
+        embeddings = self._embed(texts)
+        ids = self._generate_ids(len(texts))
+        self._store(ids, embeddings, texts, metadatas)
+        return len(texts)
+    
+    def search(self, query, n_results=5):
+        return self._query(self._embed([query])[0], n_results)
+    
+    def count(self):
+        return self._get_count()
+    
+    def get_all(self):
+        return self._get_all_data()
 
 
-class BackupManager:
-    """
-    Manages backups and restores for vector database collections.
-    """
-    
-    def __init__(self, collection, backup_dir: Path, embedder=None):
-        self.collection = collection
-        self.backup_dir = backup_dir
-        self.backup_dir.mkdir(parents=True, exist_ok=True)
-        self.embedder = embedder or SentenceTransformer('all-MiniLM-L6-v2')
-    
-    def create_backup(self, backup_name: Optional[str] = None) -> str:
-        """
-        Create a backup of the collection.
-        """
-        # Generate backup name if not provided
-        if backup_name is None:
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            backup_name = f"backup_{timestamp}.json"
-        
-        if not backup_name.endswith('.json'):
-            backup_name += '.json'
-        
-        # Get all data from collection
-        data = self.collection.get(include=["documents", "metadatas"])
-        
-        # Create backup structure
-        backup_data = {
-            "collection_name": self.collection.name,
-            "created_at": datetime.now().isoformat(),
-            "count": len(data["ids"]),
-            "ids": data["ids"],
-            "documents": data["documents"],
-            "metadatas": data["metadatas"]
-        }
-        
-        # Save to file
-        backup_path = self.backup_dir / backup_name
-        with open(backup_path, 'w') as f:
-            json.dump(backup_data, f, indent=2)
-        
-        return backup_name
-    
-    def restore_backup(self, backup_name: str, clear_existing: bool = True) -> Dict:
-        """
-        Restore collection from a backup file.
-        """
-        backup_path = self.backup_dir / backup_name
-        
-        if not backup_path.exists():
-            raise FileNotFoundError(f"Backup not found: {backup_name}")
-        
-        # Load backup
-        with open(backup_path) as f:
-            data = json.load(f)
-        
-        # Clear existing data if requested
-        if clear_existing:
-            existing = self.collection.get()
-            if existing["ids"]:
-                self.collection.delete(ids=existing["ids"])
-        
-        # Re-embed documents (embeddings aren't stored in backup)
-        if data["documents"]:
-            embeddings = self.embedder.encode(data["documents"]).tolist()
-            
-            # Add back to collection
-            self.collection.add(
-                ids=data["ids"],
-                documents=data["documents"],
-                embeddings=embeddings,
-                metadatas=data["metadatas"]
-            )
-        
-        return {
-            "restored_count": len(data["ids"]),
-            "backup_name": backup_name,
-            "original_date": data.get("created_at", "unknown")
-        }
-    
-    def list_backups(self) -> List[str]:
-        """List all available backup files."""
-        if not self.backup_dir.exists():
-            return []
-        
-        backups = [f.name for f in self.backup_dir.glob("*.json")]
-        return sorted(backups, reverse=True)  # Most recent first
+# ============================================================================
+# LOCAL VECTOR STORE - SOLUTION
+# ============================================================================
 
-
-def migrate_collection(
-    source_collection,
-    target_collection,
-    embedder
-) -> Dict:
-    """
-    Migrate data from source to target collection.
-    """
-    # Get all data from source
-    data = source_collection.get(include=["documents", "metadatas"])
+class LocalVectorStore(VectorStoreBase):
+    def __init__(self, collection_name="local_test", persist_dir=LOCAL_DATA_DIR):
+        self.persist_dir = persist_dir
+        self.collection_name = collection_name
+        self.client = None
+        self.collection = None
+        super().__init__()
     
-    if not data["ids"]:
-        return {"migrated_count": 0, "source": source_collection.name, "target": target_collection.name}
+    def _initialize(self):
+        self.persist_dir.mkdir(parents=True, exist_ok=True)
+        self.client = chromadb.PersistentClient(path=str(self.persist_dir))
+        self.collection = self.client.get_or_create_collection(self.collection_name)
     
-    # Re-embed documents
-    embeddings = embedder.encode(data["documents"]).tolist()
+    def _store(self, ids, embeddings, texts, metadatas):
+        self.collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)
     
-    # Add to target collection
-    target_collection.add(
-        ids=data["ids"],
-        documents=data["documents"],
-        embeddings=embeddings,
-        metadatas=data["metadatas"]
-    )
-    
-    return {
-        "migrated_count": len(data["ids"]),
-        "source": source_collection.name,
-        "target": target_collection.name
-    }
-
-
-@dataclass
-class HealthStatus:
-    """Health check result."""
-    name: str
-    status: str  # "OK", "WARNING", "ERROR"
-    message: str
-
-
-class DatabaseHealthCheck:
-    """
-    Health checking for vector database.
-    """
-    
-    def __init__(self, data_dir: Path, collection):
-        self.data_dir = data_dir
-        self.collection = collection
-    
-    def check_storage(self) -> HealthStatus:
-        """Check storage health."""
-        try:
-            # Check directory exists
-            if not self.data_dir.exists():
-                return HealthStatus(
-                    name="Storage",
-                    status="ERROR",
-                    message=f"Data directory does not exist: {self.data_dir}"
-                )
-            
-            # Check writable
-            test_file = self.data_dir / ".health_check"
-            try:
-                test_file.touch()
-                test_file.unlink()
-            except PermissionError:
-                return HealthStatus(
-                    name="Storage",
-                    status="ERROR",
-                    message="Data directory is not writable"
-                )
-            
-            # Check disk space (simplified - just check if we can write)
-            # In production, you'd use shutil.disk_usage()
-            try:
-                usage = shutil.disk_usage(self.data_dir)
-                gb_free = usage.free / (1024 ** 3)
-                
-                if gb_free < 1:
-                    return HealthStatus(
-                        name="Storage",
-                        status="WARNING",
-                        message=f"Low disk space: {gb_free:.1f} GB available"
-                    )
-                
-                return HealthStatus(
-                    name="Storage",
-                    status="OK",
-                    message=f"{gb_free:.1f} GB available"
-                )
-            except:
-                return HealthStatus(
-                    name="Storage",
-                    status="OK",
-                    message="Directory accessible"
-                )
-            
-        except Exception as e:
-            return HealthStatus(
-                name="Storage",
-                status="ERROR",
-                message=str(e)
-            )
-    
-    def check_collection(self) -> HealthStatus:
-        """Check collection health."""
-        try:
-            # Try to count documents
-            count = self.collection.count()
-            
-            return HealthStatus(
-                name="Collection",
-                status="OK",
-                message=f"{count} documents"
-            )
-            
-        except Exception as e:
-            return HealthStatus(
-                name="Collection",
-                status="ERROR",
-                message=str(e)
-            )
-    
-    def run_all_checks(self) -> List[HealthStatus]:
-        """Run all health checks and return results."""
+    def _query(self, embedding, n_results):
+        results = self.collection.query(
+            query_embeddings=[embedding], n_results=n_results,
+            include=["documents", "metadatas", "distances"]
+        )
         return [
-            self.check_storage(),
-            self.check_collection(),
+            {"text": results["documents"][0][i], 
+             "metadata": results["metadatas"][0][i],
+             "score": 1 - results["distances"][0][i]}
+            for i in range(len(results["documents"][0]))
         ]
+    
+    def _get_count(self):
+        return self.collection.count() if self.collection else 0
+    
+    def _get_all_data(self):
+        data = self.collection.get(include=["documents", "metadatas", "embeddings"])
+        return {"ids": data["ids"], "texts": data["documents"], 
+                "metadatas": data["metadatas"], "embeddings": data["embeddings"]}
 
 
 # ============================================================================
-# TEST HARNESS
+# CLOUD VECTOR STORE - SOLUTION
+# ============================================================================
+
+class CloudVectorStore(VectorStoreBase):
+    def __init__(self, index_name=PINECONE_INDEX_NAME):
+        self.index_name = index_name
+        self.pc = None
+        self.index = None
+        super().__init__()
+    
+    def _initialize(self):
+        api_key = os.environ.get("PINECONE_API_KEY")
+        if not api_key:
+            raise ValueError("PINECONE_API_KEY not set")
+        
+        self.pc = Pinecone(api_key=api_key)
+        existing = [idx.name for idx in self.pc.list_indexes()]
+        
+        if self.index_name not in existing:
+            self.pc.create_index(
+                name=self.index_name, dimension=EMBEDDING_DIMENSION, metric="cosine",
+                spec=ServerlessSpec(cloud="aws", region="us-east-1")
+            )
+            import time
+            while not self.pc.describe_index(self.index_name).status.ready:
+                time.sleep(1)
+        
+        self.index = self.pc.Index(self.index_name)
+    
+    def _store(self, ids, embeddings, texts, metadatas):
+        vectors = [{"id": ids[i], "values": embeddings[i], 
+                    "metadata": {**metadatas[i], "text": texts[i]}}
+                   for i in range(len(ids))]
+        
+        for i in range(0, len(vectors), 100):
+            self.index.upsert(vectors=vectors[i:i+100])
+    
+    def _query(self, embedding, n_results):
+        results = self.index.query(vector=embedding, top_k=n_results, include_metadata=True)
+        return [{"text": m.metadata.get("text", ""), 
+                 "metadata": {k: v for k, v in m.metadata.items() if k != "text"},
+                 "score": m.score}
+                for m in results.matches]
+    
+    def _get_count(self):
+        return self.index.describe_index_stats().total_vector_count if self.index else 0
+    
+    def _get_all_data(self):
+        return {"ids": [], "texts": [], "metadatas": [], "embeddings": []}
+
+
+# ============================================================================
+# HELPERS
+# ============================================================================
+
+def migrate_to_cloud(local, cloud):
+    data = local.get_all()
+    if data.get("texts"):
+        cloud.add_documents(data["texts"], data["metadatas"])
+    return {"local_count": len(data.get("texts", [])), "cloud_count": cloud.count()}
+
+def verify_migration(local, cloud, queries):
+    for q in queries:
+        l, c = local.search(q, 1), cloud.search(q, 1)
+        if l and c and l[0].get("text") != c[0].get("text"):
+            return False
+    return True
+
+def create_vector_store(env="local"):
+    return LocalVectorStore() if env == "local" else CloudVectorStore()
+
+
+# ============================================================================
+# TEST
 # ============================================================================
 
 def run_tests():
-    """Test the persistent deployment setup."""
     print("=" * 60)
-    print("Exercise 01: Persistent Deployment - SOLUTION")
-    print("=" * 60)
-    
-    embedder = SentenceTransformer('all-MiniLM-L6-v2')
-    
-    # Clean up from previous runs
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
-    if BACKUP_DIR.exists():
-        shutil.rmtree(BACKUP_DIR)
-    
-    # Test 1: Setup persistent client
-    print("\n=== Persistent Client Setup ===")
-    
-    client, collection = setup_persistent_client(DATA_DIR)
-    print(f"[OK] Persistent client initialized at {DATA_DIR}")
-    
-    # Add sample data
-    embeddings = embedder.encode([d["content"] for d in SAMPLE_DOCUMENTS]).tolist()
-    collection.add(
-        ids=[d["id"] for d in SAMPLE_DOCUMENTS],
-        documents=[d["content"] for d in SAMPLE_DOCUMENTS],
-        embeddings=embeddings,
-        metadatas=[d["metadata"] for d in SAMPLE_DOCUMENTS]
-    )
-    print(f"[OK] Added {len(SAMPLE_DOCUMENTS)} sample documents")
-    
-    # Test 2: Backup
-    print("\n=== Backup Test ===")
-    
-    backup_mgr = BackupManager(collection, BACKUP_DIR, embedder)
-    backup_name = backup_mgr.create_backup()
-    print(f"[OK] Created backup: {backup_name}")
-    
-    # Verify backup
-    backup_path = BACKUP_DIR / backup_name
-    with open(backup_path) as f:
-        data = json.load(f)
-    print(f"[OK] Backup contains {len(data['ids'])} documents")
-    
-    # List backups
-    backups = backup_mgr.list_backups()
-    print(f"[OK] Available backups: {backups}")
-    
-    # Test 3: Restore
-    print("\n=== Restore Test ===")
-    
-    # Clear and restore
-    stats = backup_mgr.restore_backup(backup_name)
-    print(f"[OK] Restored {stats['restored_count']} documents from backup")
-    
-    # Verify restore
-    print(f"[OK] Collection now has {collection.count()} documents")
-    
-    # Test 4: Migration
-    print("\n=== Migration Test ===")
-    
-    target_collection = client.get_or_create_collection("migrated_docs")
-    migration_stats = migrate_collection(collection, target_collection, embedder)
-    print(f"[OK] Migrated {migration_stats['migrated_count']} documents from '{migration_stats['source']}' to '{migration_stats['target']}'")
-    
-    # Test 5: Health Check
-    print("\n=== Health Check ===")
-    
-    health = DatabaseHealthCheck(DATA_DIR, collection)
-    results = health.run_all_checks()
-    
-    for check in results:
-        print(f"{check.name}: [{check.status}] {check.message}")
-    
-    print("\n" + "=" * 60)
-    print("[OK] Persistent deployment complete!")
+    print("Exercise 01 SOLUTION: Base Class Pattern")
     print("=" * 60)
     
-    # Cleanup
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
-    if BACKUP_DIR.exists():
-        shutil.rmtree(BACKUP_DIR)
-
+    shutil.rmtree(LOCAL_DATA_DIR, ignore_errors=True)
+    
+    local = LocalVectorStore()
+    local.add_documents([d["text"] for d in SAMPLE_DOCS], [{"category": d["category"]} for d in SAMPLE_DOCS])
+    print(f"[OK] Local: {local.count()} docs, search: {local.search('ml')[0]['text'][:40]}...")
+    
+    if os.environ.get("PINECONE_API_KEY"):
+        cloud = CloudVectorStore()
+        migrate_to_cloud(local, cloud)
+        print(f"[OK] Cloud: {cloud.count()} docs, verified: {verify_migration(local, cloud, ['ml'])}")
+    
+    shutil.rmtree(LOCAL_DATA_DIR, ignore_errors=True)
+    print("[DONE]")
 
 if __name__ == "__main__":
     run_tests()
